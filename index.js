@@ -1,5 +1,19 @@
 const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
+const express = require('express');
+
+// --- МІНІМАЛЬНИЙ ВЕБСЕРВЕР ДЛЯ RENDER (Щоб бот не засинав і не видавав помилку "No open ports detected") ---
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('Ambassador Bot is running 24/7!');
+});
+
+app.listen(PORT, () => {
+  console.log(`🌐 Express сервер слухає порт ${PORT}`);
+});
+// -------------------------------------------------------------------------------------------------------
 
 const bot = new Telegraf('8918097789:AAFAkHe89nUTw_cqTvHakfhgcqpZ2ROiwPQ');
 
@@ -44,7 +58,6 @@ function getProfileKeyboard() {
 // 🔍 АВТОМАТИЧНЕ ЗЧИТУВАННЯ ЦІНИ ТА ТЕКСТУ З КАНАЛУ
 async function fetchPostPrice(url) {
   try {
-    // Приклад посилання: https://t.me/ambassadorshopp/36 або https://t.me/c/123456/36
     const cleanUrl = url.split('?')[0];
     const parts = cleanUrl.split('/');
     const postId = parseInt(parts[parts.length - 1], 10);
@@ -52,25 +65,17 @@ async function fetchPostPrice(url) {
 
     if (!postId || isNaN(postId)) return 1250;
 
-    // Якщо приватний канал або публічний юзернейм
     if (channel === 'c') {
       channel = '-100' + parts[parts.length - 3];
     } else if (!channel.startsWith('@')) {
       channel = '@' + channel;
     }
-
-    // Отримуємо повідомлення з каналу (оскільки бот адмін)
-    // Telegram Bot API не дає прямого методу getMessage по ID каналу без сторонніх трюків, 
-    // тому використовуємо безпечний метод пересилання у технічний чат або кешування, 
-    // АБО зчитуємо цифри безпосередньо з тексту, якщо покупець написав суму, АБО через forwardMessage до самого себе:
     
     const forwardRes = await bot.telegram.forwardMessage(ADMIN_IDS[0], channel, postId).catch(() => null);
     if (forwardRes) {
       const text = forwardRes.text || forwardRes.caption || '';
-      // Видаляємо переслане повідомлення, щоб не засмічувати чат адміну
       await bot.telegram.deleteMessage(ADMIN_IDS[0], forwardRes.message_id).catch(() => {});
       
-      // Шукаємо ціну в тексті (наприклад "1250", "1250грн", "Ціна: 1250")
       const match = text.match(/(?:ціна|грн|uah)?\D*(\d{3,5})\b/i);
       if (match && match[1]) {
         const foundPrice = parseInt(match[1], 10);
@@ -82,7 +87,7 @@ async function fetchPostPrice(url) {
   } catch (err) {
     console.log('Помилка авточитання ціни з поста:', err.message);
   }
-  return 1250; // Дефолтна ціна, якщо не вдалося зчитати
+  return 1250;
 }
 
 bot.start((ctx) => {
@@ -472,7 +477,7 @@ bot.on('text', async (ctx, next) => {
 💰 *Автоматично визначена ціна:* ${detectedPrice} грн
 
 🪙 *Скільки Ambassador Coins ви хочете списати?*
-_(Доступно на балансі: ${userCoins} coins = ${userCoins * 5} грн знижки):_`
+- _(Доступно на балансі: ${userCoins} coins = ${userCoins * 5} грн знижки):_`
     );
   }
 });
@@ -506,7 +511,6 @@ bot.command('complete', (ctx) => {
 
   purchase.status = 'completed';
 
-  // Розрахунок кешбеку: 1 коїн за кожні 250 грн фактичної вартості
   const actualPrice = purchase.finalPrice || purchase.originalPrice || 1250;
   const cashbackCoins = Math.floor(actualPrice / 250); 
   const cashbackUah = cashbackCoins * 5;
