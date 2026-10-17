@@ -1,0 +1,90 @@
+{
+  "lastCardNumber": 4,
+  "users": {
+    "919559346": {
+      "cardNumber": 1,
+      "username": "skirz",
+      "coins": 39
+    },
+    "1366530335": {
+      "cardNumber": 4,
+      "username": "дащв",
+      "coins": 0
+    },
+    "8603943147": {
+      "cardNumber": 2,
+      "username": "sk1rzz",
+      "coins": 0
+    },
+    "8383022779": {
+      "cardNumber": 3,
+      "username": "@ambassador101",
+      "coins": 13
+    }
+  },
+  "purchases": {
+    "p_1792255763829": {
+      "userId": 919559346,
+      "postLink": "https://t.me/ambassadorshopp/36?single",
+      "originalPrice": 3500,
+      "coinsUsed": 100,
+      "finalPrice": 3000,
+      "date": "2026-10-17T16:49:23.829Z",
+      "status": "completed"
+    },
+    "p_1792256934845": {
+      "userId": 919559346,
+      "postLink": "https://t.me/ambassadorshopp/34?single",
+      "originalPrice": 3500,
+      "coinsUsed": 0,
+      "finalPrice": 3500,
+      "status": "completed",
+      "date": "2026-10-17T17:08:54.845Z"
+    },
+    "p_1792257115369": {
+      "userId": 919559346,
+      "postLink": "https://t.me/ambassadorshopp/34?single",
+      "originalPrice": 3500,
+      "coinsUsed": 0,
+      "finalPrice": 3500,
+      "status": "completed",
+      "date": "2026-10-17T17:11:55.369Z"
+    },
+    "p_1792257325553": {
+      "userId": 919559346,
+      "postLink": "https://t.me/ambassadorshopp/34?single",
+      "originalPrice": 3500,
+      "coinsUsed": 0,
+      "finalPrice": 3500,
+      "status": "completed",
+      "date": "2026-10-17T17:15:25.553Z"
+    },
+    "p_1792257761510": {
+      "userId": 919559346,
+      "postLink": "https://t.me/ambassadorshopp/34?single",
+      "originalPrice": 1250,
+      "coinsUsed": 0,
+      "finalPrice": 1250,
+      "status": "completed",
+      "date": "2026-10-17T17:22:41.510Z"
+    },
+    "p_1792257904966": {
+      "userId": 8383022779,
+      "postLink": "https://t.me/ambassadorshopp/36",
+      "originalPrice": 3499,
+      "coinsUsed": 0,
+      "finalPrice": 3499,
+      "status": "completed",
+      "date": "2026-10-17T17:25:04.966Z"
+    },
+    "p_1792259008201": {
+      "userId": 919559346,
+      "postLink": "https://t.me/ambassadorshopp/6",
+      "originalPrice": 3200,
+      "coinsUsed": 0,
+      "finalPrice": 3200,
+      "status": "pending",
+      "date": "2026-10-17T17:43:28.201Z"
+    }
+  }
+}
