@@ -2,7 +2,7 @@ const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
 const express = require('express');
 
-// --- МІНІМАЛЬНИЙ ВЕБСЕРВЕР ДЛЯ RENDER (Щоб бот не засинав і не видавав помилку "No open ports detected") ---
+// --- МІНІМАЛЬНИЙ ВЕБСЕРВЕР ДЛЯ RENDER ---
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -13,27 +13,24 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🌐 Express сервер слухає порт ${PORT}`);
 });
-// -------------------------------------------------------------------------------------------------------
+// ----------------------------------------
 
 const bot = new Telegraf('8918097789:AAFAkHe89nUTw_cqTvHakfhgcqpZ2ROiwPQ');
 
-// ⚠️ Числові ID вас двох як головних адміністраторів
 const ADMIN_IDS = [8603943147, 8383022779]; 
-
-// ⚠️ Telegram-юзернейми адміністраторів без символу @
 const ADMIN_USERNAMES = ['ambassador101', 'sk1rzzz']; 
 
 const DB_FILE = 'database.json';
 
-// Завантаження бази даних
-let db = { lastCardNumber: 0, users: {}, purchases: {} };
+let db = { lastCardNumber: 0, users: {}, purchases: {}, products: [] };
 if (fs.existsSync(DB_FILE)) {
   try {
     db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     if (!db.purchases) db.purchases = {};
+    if (!db.products) db.products = [];
     console.log('📦 База даних успішно завантажена!');
   } catch (err) {
-    console.error('Помилка читання бази даних.');
+    console.error('Помилка читання бази даних:', err.message);
   }
 }
 
@@ -44,51 +41,68 @@ function saveDB() {
 const userState = {};
 const waitingCoins = {};
 
-// Головна клавіатура
 function getProfileKeyboard() {
   return Markup.inlineKeyboard([
+    [Markup.button.callback('📦 Каталог товарів', 'open_catalog')],
     [Markup.button.callback('👤 Особистий кабінет', 'profile_info')],
-    [Markup.button.callback('🛒 Купити товар', 'buy_item')],
-    [Markup.button.callback('🎁 Використати Ambassador Coins', 'use_coins')],
-    [Markup.button.callback('📦 Мої покупки', 'my_purchases')],
+    [Markup.button.callback('🛍 Мої покупки', 'my_purchases')],
     [Markup.button.callback('📲 Зв\'язатися з адміністратором', 'contact_admin')]
   ]);
 }
 
-// 🔍 АВТОМАТИЧНЕ ЗЧИТУВАННЯ ЦІНИ ТА ТЕКСТУ З КАНАЛУ
-async function fetchPostPrice(url) {
-  try {
-    const cleanUrl = url.split('?')[0];
-    const parts = cleanUrl.split('/');
-    const postId = parseInt(parts[parts.length - 1], 10);
-    let channel = parts[parts.length - 2];
-
-    if (!postId || isNaN(postId)) return 1250;
-
-    if (channel === 'c') {
-      channel = '-100' + parts[parts.length - 3];
-    } else if (!channel.startsWith('@')) {
-      channel = '@' + channel;
+function parsePriceFromText(text) {
+  if (!text) return 1250;
+  const match = text.match(/(?:ціна|грн|uah)?\D*(\d{3,5})\b/i);
+  if (match && match[1]) {
+    const foundPrice = parseInt(match[1], 10);
+    if (foundPrice > 50 && foundPrice < 100000) {
+      return foundPrice;
     }
-    
-    const forwardRes = await bot.telegram.forwardMessage(ADMIN_IDS[0], channel, postId).catch(() => null);
-    if (forwardRes) {
-      const text = forwardRes.text || forwardRes.caption || '';
-      await bot.telegram.deleteMessage(ADMIN_IDS[0], forwardRes.message_id).catch(() => {});
-      
-      const match = text.match(/(?:ціна|грн|uah)?\D*(\d{3,5})\b/i);
-      if (match && match[1]) {
-        const foundPrice = parseInt(match[1], 10);
-        if (foundPrice > 50 && foundPrice < 100000) {
-          return foundPrice;
-        }
-      }
-    }
-  } catch (err) {
-    console.log('Помилка авточитання ціни з поста:', err.message);
   }
   return 1250;
 }
+
+// АВТОМАТИЧНИЙ ПАРСИНГ НОВИХ ТОВАРІВ З КАНАЛУ (ЗА СЛОВОМ "КОЛІР")
+bot.on('channel_post', async (ctx) => {
+  try {
+    const post = ctx.channelPost;
+    const text = post.text || post.caption || '';
+
+    if (/колір|цвет/i.test(text)) {
+      const detectedPrice = parsePriceFromText(text);
+      let photoId = null;
+
+      if (post.photo && post.photo.length > 0) {
+        photoId = post.photo[post.photo.length - 1].file_id;
+      }
+
+      const firstLine = text.split('\n')[0].trim();
+      const title = firstLine.length > 50 ? firstLine.substring(0, 47) + '...' : firstLine;
+
+      const newProduct = {
+        id: 'prod_' + post.message_id,
+        messageId: post.message_id,
+        title: title ? title : 'Товар з каналу',
+        caption: text,
+        price: detectedPrice,
+        photo: photoId,
+        date: new Date().toISOString()
+      };
+
+      const existingIndex = db.products.findIndex(p => p.messageId === post.message_id);
+      if (existingIndex !== -1) {
+        db.products[existingIndex] = newProduct;
+      } else {
+        db.products.unshift(newProduct);
+      }
+
+      saveDB();
+      console.log(`✅ [КАТАЛОГ] Додано новий товар #${post.message_id} (Ціна: ${detectedPrice} грн)`);
+    }
+  } catch (err) {
+    console.error('Помилка при зчитуванні поста каналу:', err.message);
+  }
+});
 
 bot.start((ctx) => {
   const userId = ctx.from.id;
@@ -159,8 +173,59 @@ bot.action('profile_info', async (ctx) => {
   }
 });
 
-// Кнопка "Купити товар" (без знижки)
-bot.action('buy_item', async (ctx) => {
+async function showCatalogProduct(ctx, pageIndex) {
+  if (!db.products || db.products.length === 0) {
+    return ctx.reply('🛍 Наразі каталог товарів порожній. Зачекайте на нові публікації в каналі!', getProfileKeyboard());
+  }
+
+  const total = db.products.length;
+  const index = Math.max(0, Math.min(pageIndex, total - 1));
+  const product = db.products[index];
+
+  const captionText = 
+`📦 *Товар ${index + 1} з ${total}*
+
+${product.caption}
+
+💰 *Ціна:* ${product.price} грн`;
+
+  const navigationButtons = [];
+  if (index > 0) navigationButtons.push(Markup.button.callback('⬅️ Назад', `cat_page_${index - 1}`));
+  if (index < total - 1) navigationButtons.push(Markup.button.callback('Вперед ➡️', `cat_page_${index + 1}`));
+
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('🛒 Купити товар', `buy_prod_${product.id}`)],
+    [Markup.button.callback('🎁 Знижка (Ambassador Coins)', `use_coins_prod_${product.id}`)],
+    ...(navigationButtons.length > 0 ? [navigationButtons] : []),
+    [Markup.button.callback('🏠 Головне меню', 'back_to_menu')]
+  ]);
+
+  if (product.photo) {
+    await ctx.replyWithPhoto(product.photo, { caption: captionText, parse_mode: 'Markdown', ...keyboard }).catch(async () => {
+      await ctx.replyWithMarkdown(captionText, keyboard);
+    });
+  } else {
+    await ctx.replyWithMarkdown(captionText, keyboard);
+  }
+}
+
+bot.action('open_catalog', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  return showCatalogProduct(ctx, 0);
+});
+
+bot.action(/^cat_page_(\d+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const page = parseInt(ctx.match[1], 10);
+  return showCatalogProduct(ctx, page);
+});
+
+bot.action('back_to_menu', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  return ctx.reply('🏠 Ви повернулися в головне меню:', getProfileKeyboard());
+});
+
+bot.action(/^buy_prod_(.+)$/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const userId = ctx.from.id;
 
@@ -168,26 +233,20 @@ bot.action('buy_item', async (ctx) => {
     return ctx.reply('Спочатку створіть карту клієнта!');
   }
 
-  userState[userId] = 'waiting_buy_link';
-  return ctx.reply(`🔗 Надішліть посилання на пост із товаром у нашому Telegram-каналі:`);
-});
+  const productId = ctx.match[1];
+  const product = db.products.find(p => p.id === productId);
 
-// Підтвердження звичайної купівлі
-bot.action('confirm_buy_item', async (ctx) => {
-  await ctx.answerCbQuery().catch(() => {});
-  const userId = ctx.from.id;
-  const user = db.users[userId];
-  const stateData = userState[userId];
+  if (!product) {
+    return ctx.reply('❌ На жаль, цей товар більше не доступний у каталозі.');
+  }
 
-  const postLink = (stateData && stateData.link) ? stateData.link : 'Посилання не вказано';
-  const originalPrice = (stateData && stateData.price) ? stateData.price : 1250;
-
+  const originalPrice = product.price;
   const purchaseId = 'p_' + Date.now();
   const shortId = purchaseId.slice(-5);
 
   db.purchases[purchaseId] = {
     userId,
-    postLink,
+    productTitle: product.title,
     originalPrice,
     coinsUsed: 0,
     finalPrice: originalPrice,
@@ -197,26 +256,27 @@ bot.action('confirm_buy_item', async (ctx) => {
   saveDB();
 
   await ctx.replyWithMarkdown(
-`✅ *Бот успішно сповістив адміністраторів!*
+`✅ *Ваше замовлення успішно створено!*
 
 🆔 *Номер замовлення:* \`#${shortId}\`
-🔗 *Товар:* ${postLink}
-💰 *Визначена ціна:* ${originalPrice} грн
+🛍 *Товар:* ${product.title}
+💰 *Сума до сплати:* ${originalPrice} грн
 
-Дякуємо за вибір Ambassador Shop. Чекайте на відповідь адміністратора!`,
+Дякуємо за вибір Ambassador Shop. Очікуйте на повідомлення від адміністратора!`,
     getProfileKeyboard()
   );
 
-  const clientUsername = ctx.from.username || (user ? user.username : 'без_юзернейма');
+  const user = db.users[userId];
+  const clientUsername = ctx.from.username ? ctx.from.username : (user ? user.username : 'без_юзернейма');
   const userCardNum = user ? user.cardNumber : 'Немає';
-  const adminTags = ADMIN_USERNAMES.map(u => `@${u}`).join(' ');
+  const adminTags = ADMIN_USERNAMES.map(u => '@' + u).join(' ');
 
   const adminMsg = 
 `🛍 *НОВА ЗАЯВКА НА КУПІВЛЮ ТОВАРУ!*
 
 🆔 *Номер замовлення:* \`#${shortId}\`
 👤 *Покупець:* @${clientUsername} (Карта #${userCardNum})
-🔗 *Товар:* ${postLink}
+🛍 *Товар:* ${product.title}
 💰 *Ціна товару:* ${originalPrice} грн
 
 🔔 *Відповідальні адміни:* ${adminTags}
@@ -225,12 +285,9 @@ bot.action('confirm_buy_item', async (ctx) => {
   for (const adminId of ADMIN_IDS) {
     bot.telegram.sendMessage(adminId, adminMsg, { parse_mode: 'Markdown' }).catch(() => {});
   }
-
-  delete userState[userId];
 });
 
-// Кнопка "Використати Ambassador Coins"
-bot.action('use_coins', async (ctx) => {
+bot.action(/^use_coins_prod_(.+)$/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const userId = ctx.from.id;
 
@@ -243,11 +300,28 @@ bot.action('use_coins', async (ctx) => {
     return ctx.replyWithMarkdown('❌ *У вас на балансі 0 Ambassador Coins.*\n\nРобіть покупки в нашому каналі та накопичуйте коїни!');
   }
 
-  userState[userId] = 'waiting_coins_link';
-  return ctx.reply(`🔗 Надішліть посилання на пост із товаром у нашому Telegram-каналі:`);
+  const productId = ctx.match[1];
+  const product = db.products.find(p => p.id === productId);
+
+  if (!product) {
+    return ctx.reply('❌ На жаль, цей товар більше не доступний у каталозі.');
+  }
+
+  waitingCoins[userId] = {
+    productId: product.id,
+    productTitle: product.title,
+    price: product.price
+  };
+
+  return ctx.replyWithMarkdown(
+`🛍 *Обраний товар:* ${product.title}
+💰 *Ціна товару:* ${product.price} грн
+
+🪙 *Скільки Ambassador Coins ви хочете списати?*
+- _(Доступно на балансі: ${user.coins} coins =${user.coins * 5} грн знижки):_`
+  );
 });
 
-// Кнопка зв'язку з адмінами
 bot.action('contact_admin', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   
@@ -261,7 +335,6 @@ bot.action('contact_admin', async (ctx) => {
   );
 });
 
-// Розділ "Мої покупки"
 bot.action('my_purchases', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const userId = ctx.from.id;
@@ -277,11 +350,12 @@ bot.action('my_purchases', async (ctx) => {
   for (const purchase of userPurchases) {
     const shortId = purchase.id.slice(-5);
     const isCompleted = purchase.status === 'completed';
+    const prodTitle = purchase.productTitle ? purchase.productTitle : 'Товар з каталогу';
 
     let text = 
 `📦 *Замовлення #${shortId}*
-🔗 *Товар:* ${purchase.postLink}
-💰 *Ціна:* ${purchase.originalPrice} грн
+🛍 *Товар:* ${prodTitle}
+💰 *Початкова ціна:* ${purchase.originalPrice} грн
 🪙 *Списано коїнів:* ${purchase.coinsUsed} coins (-${purchase.coinsUsed * 5} грн)
 🔥 *ФІНАЛЬНА ЦІНА:* *${purchase.finalPrice} грн*
 📌 *Статус:* ${isCompleted ? '✅ *Підтверджено / Відправлено*' : '⏳ *В обробці*'}`;
@@ -299,7 +373,6 @@ bot.action('my_purchases', async (ctx) => {
   }
 });
 
-// Скасування замовлення покупцем
 bot.action(/^cancel_purchase_(.+)$/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const purchaseId = ctx.match[1];
@@ -322,26 +395,29 @@ bot.action(/^cancel_purchase_(.+)$/, async (ctx) => {
   delete db.purchases[purchaseId];
   saveDB();
 
+  const userCardNum = db.users[userId] ? db.users[userId].cardNumber : '?';
+  const userCoinsBal = db.users[userId] ? db.users[userId].coins : 0;
+
   await ctx.replyWithMarkdown(
 `✅ *Замовлення скасовано!*
 
 🪙 Вам успішно повернуто *+${purchase.coinsUsed} Ambassador Coins* на баланс.
-Поточний баланс: *${db.users[userId].coins} coins*.`,
+Поточний баланс: *${userCoinsBal} coins*.`,
     getProfileKeyboard()
   );
 
-  const clientUsername = ctx.from.username || (db.users[userId] ? db.users[userId].username : 'клієнт');
+  const clientUsername = ctx.from.username ? ctx.from.username : (db.users[userId] ? db.users[userId].username : 'клієнт');
+  const prodTitle = purchase.productTitle ? purchase.productTitle : 'Товар';
 
   for (const adminId of ADMIN_IDS) {
     bot.telegram.sendMessage(
       adminId,
-      `⚠️ *КЛІЄНТ СКАСУВАВ ЗАМОВЛЕННЯ!*\n\n👤 Клієнт: @${clientUsername} (Карта #${db.users[userId] ? db.users[userId].cardNumber : '?'})\n🔗 Товар: ${purchase.postLink}\n🪙 Повернуто коїнів: ${purchase.coinsUsed} coins`,
+      `⚠️ *КЛІЄНТ СКАСУВАВ ЗАМОВЛЕННЯ!*\n\n👤 Клієнт: @${clientUsername} (Карта #${userCardNum})\n🛍 Товар: ${prodTitle}\n🪙 Повернуто коїнів: ${purchase.coinsUsed} coins`,
       { parse_mode: 'Markdown' }
     ).catch(() => {});
   }
 });
 
-// ОБРОБКА ТЕКСТОВИХ ПОВІДОМЛЕНЬ
 bot.on('text', async (ctx, next) => {
   const userId = ctx.from.id;
   const messageText = ctx.message.text.trim();
@@ -350,8 +426,7 @@ bot.on('text', async (ctx, next) => {
     return next();
   }
 
-  // 1. Введення кількості коїнів (після авточитання ціни з поста)
-  if (waitingCoins[userId] && waitingCoins[userId].price) {
+  if (waitingCoins[userId] && waitingCoins[userId].productId) {
     const coinsToUse = parseInt(messageText, 10);
     const userCoins = db.users[userId] ? db.users[userId].coins : 0;
 
@@ -363,8 +438,7 @@ bot.on('text', async (ctx, next) => {
       return ctx.reply(`⚠️ Недостатньо коїнів! Поточний баланс: ${userCoins} coins. Введіть менше число:`);
     }
 
-    const postLink = waitingCoins[userId].link;
-    const originalPrice = waitingCoins[userId].price;
+    const { productTitle, price: originalPrice } = waitingCoins[userId];
     delete waitingCoins[userId];
 
     const discountUah = coinsToUse * 5;
@@ -375,7 +449,7 @@ bot.on('text', async (ctx, next) => {
     const purchaseId = 'p_' + Date.now();
     db.purchases[purchaseId] = {
       userId,
-      postLink,
+      productTitle,
       originalPrice,
       coinsUsed: coinsToUse,
       finalPrice,
@@ -390,8 +464,8 @@ bot.on('text', async (ctx, next) => {
 `🎉 *Заявку на знижку успішно сформовано!*
 
 🆔 *Номер замовлення:* \`#${shortId}\`
-🔗 *Товар:* ${postLink}
-💰 *Ціна товару:* ${originalPrice} грн
+🛍 *Товар:* ${productTitle}
+💰 *Початкова ціна:* ${originalPrice} грн
 🪙 *Списано коїнів:* ${coinsToUse} coins (-${discountUah} грн)
 🔥 *Тепер це буде коштувати:* *${finalPrice} грн*
 
@@ -399,15 +473,15 @@ bot.on('text', async (ctx, next) => {
       getProfileKeyboard()
     );
 
-    const clientUsername = ctx.from.username || db.users[userId].username;
-    const adminTags = ADMIN_USERNAMES.map(u => `@${u}`).join(' ');
+    const clientUsername = ctx.from.username ? ctx.from.username : db.users[userId].username;
+    const adminTags = ADMIN_USERNAMES.map(u => '@' + u).join(' ');
 
     const adminMessage = 
 `📥 *НОВЕ ЗАМОВЛЕННЯ ЗІ ЗНИЖКОЮ!*
 
 🆔 *Номер замовлення:* \`#${shortId}\`
 👤 *Клієнт:* @${clientUsername} (Картка #${db.users[userId].cardNumber})
-🔗 *Товар:* ${postLink}
+🛍 *Товар:* ${productTitle}
 💰 *Ціна товару:* ${originalPrice} грн
 🪙 *Списано коїнів:* ${coinsToUse} coins (-${discountUah} грн)
 🔥 *РАЗОМ ДО СПЛАТИ:* *${finalPrice} грн*
@@ -421,7 +495,6 @@ bot.on('text', async (ctx, next) => {
     return;
   }
 
-  // 2. Створення картки
   if (userState[userId] === 'waiting_username') {
     db.lastCardNumber += 1;
     db.users[userId] = {
@@ -442,47 +515,8 @@ bot.on('text', async (ctx, next) => {
       getProfileKeyboard()
     );
   }
-
-  // 3. Купівля без коїнів (Автоматичне зчитування ціни з поста)
-  if (userState[userId] === 'waiting_buy_link') {
-    const postLink = messageText;
-    await ctx.reply('⏳ Зчитую ціну з поста...');
-
-    const detectedPrice = await fetchPostPrice(postLink);
-    userState[userId] = { link: postLink, price: detectedPrice };
-
-    return ctx.replyWithMarkdown(
-`🔗 *Посилання прийнято!*
-💰 *Автоматично визначена ціна:* ${detectedPrice} грн
-
-Натисніть кнопку нижче, щоб сповістити адміністратора:`,
-      Markup.inlineKeyboard([
-        [Markup.button.callback('📲 Зв\'язатися з адміністратором для покупки', 'confirm_buy_item')]
-      ])
-    );
-  }
-
-  // 4. Знижка за коїни (Автоматичне зчитування ціни з поста)
-  if (userState[userId] === 'waiting_coins_link') {
-    const postLink = messageText;
-    await ctx.reply('⏳ Зчитую ціну з поста...');
-
-    const detectedPrice = await fetchPostPrice(postLink);
-    waitingCoins[userId] = { link: postLink, price: detectedPrice };
-    delete userState[userId];
-
-    const userCoins = db.users[userId] ? db.users[userId].coins : 0;
-    return ctx.replyWithMarkdown(
-`🛍 *Посилання прийнято!*
-💰 *Автоматично визначена ціна:* ${detectedPrice} грн
-
-🪙 *Скільки Ambassador Coins ви хочете списати?*
-- _(Доступно на балансі: ${userCoins} coins = ${userCoins * 5} грн знижки):_`
-    );
-  }
 });
 
-// АДМІН-КОМАНДА /complete (КЕШБЕК: 1 КОЇН ЗА КОЖНІ 250 ГРН)
 bot.command('complete', (ctx) => {
   const senderId = ctx.from.id;
 
@@ -496,7 +530,6 @@ bot.command('complete', (ctx) => {
   }
 
   const searchId = args[1].replace('#', '').trim();
-
   let foundKey = Object.keys(db.purchases).find(key => key === searchId || key.slice(-5) === searchId);
 
   if (!foundKey) {
@@ -535,7 +568,6 @@ bot.command('complete', (ctx) => {
   ).catch(() => {});
 });
 
-// АДМІН-КОМАНДА /add
 bot.command('add', (ctx) => {
   const senderId = ctx.from.id;
 
@@ -568,7 +600,6 @@ bot.command('add', (ctx) => {
   bot.telegram.sendMessage(targetUserId, `🎉 Вам нараховано *+${coinsToAdd} Ambassador Coins*!`, { parse_mode: 'Markdown' }).catch(() => {});
 });
 
-// АДМІН-КОМАНДА /remove
 bot.command('remove', (ctx) => {
   if (!ADMIN_IDS.includes(ctx.from.id)) {
     return ctx.reply('❌ У вас немає прав.');

@@ -76,15 +76,7 @@
       "finalPrice": 3499,
       "status": "completed",
       "date": "2026-10-17T17:25:04.966Z"
-    },
-    "p_1792259008201": {
-      "userId": 919559346,
-      "postLink": "https://t.me/ambassadorshopp/6",
-      "originalPrice": 3200,
-      "coinsUsed": 0,
-      "finalPrice": 3200,
-      "status": "pending",
-      "date": "2026-10-17T17:43:28.201Z"
     }
-  }
+  },
+  "products": []
 }
