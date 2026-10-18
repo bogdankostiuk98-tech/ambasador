@@ -38,7 +38,6 @@ function saveDB() {
   fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
 }
 
-const userState = {};
 const waitingCoins = {};
 
 // Динамічна клавіатура: для адмінів додається кнопка перегляду всіх карт
@@ -50,7 +49,6 @@ function getProfileKeyboard(userId) {
     [Markup.button.callback('📲 Зв\'язатися з адміністратором', 'contact_admin')]
   ];
 
-  // Якщо користувач адміністратор — додаємо спец-кнопку
   if (ADMIN_IDS.includes(Number(userId))) {
     buttons.push([Markup.button.callback('📋 Усі карти клієнтів (Адмін)', 'admin_all_cards')]);
   }
@@ -114,13 +112,12 @@ bot.on('channel_post', async (ctx) => {
 
 bot.start((ctx) => {
   const userId = ctx.from.id;
-  delete userState[userId];
   delete waitingCoins[userId];
 
   const welcomeText = 
 `🛍 *Вітаємо в Ambassador Shop!*
 
-Створіть клієнтську карту для накопичення *Ambassador Coins*!
+Створіть клієнтську карту однією кнопкою для накопичення *Ambassador Coins*!
 🪙 *1 Ambassador Coin = 5 грн*
 
 Накопичуйте коїни та отримуйте знижки на свої покупки.
@@ -136,19 +133,37 @@ _Оберіть дію нижче:_`;
   );
 });
 
+// АВТОМАТИЧНЕ СТВОРЕННЯ КАРТИ БЕЗ ВВЕДЕННЯ ТЕКСТУ
 bot.action('create_card', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const userId = ctx.from.id;
 
   if (db.users[userId]) {
     return ctx.reply(
-      `У вас вже є створена карта!\n🆔 Ваш номер: #${db.users[userId].cardNumber}\n👤 Юзернейм: ${db.users[userId].username}`,
+      `У вас вже є створена карта!\n🆔 Ваш номер: #${db.users[userId].cardNumber}\n👤 Ім'я: ${db.users[userId].username}`,
       getProfileKeyboard(userId)
     );
   }
 
-  userState[userId] = 'waiting_username';
-  return ctx.reply('Введіть свій Telegram Username або нікнейм для створення клієнтської карти:');
+  // Видаємо номер карти по порядку
+  db.lastCardNumber += 1;
+  const usernameFromTg = ctx.from.username ? '@' + ctx.from.username : (ctx.from.first_name || 'Клієнт');
+
+  db.users[userId] = {
+    cardNumber: db.lastCardNumber,
+    username: usernameFromTg,
+    coins: 0
+  };
+  saveDB();
+
+  return ctx.replyWithMarkdown(
+`🎉 *Вітаємо! Вашу карту Ambassador Shop успішно створено!*
+
+🆔 *Ваш номер картки:* #${db.lastCardNumber}
+👤 *Ваш профіль:* ${usernameFromTg}
+🪙 *Баланс:* 0 Ambassador Coins`,
+    getProfileKeyboard(userId)
+  );
 });
 
 bot.action('has_card', async (ctx) => {
@@ -158,7 +173,25 @@ bot.action('has_card', async (ctx) => {
   if (db.users[userId]) {
     return ctx.reply(`👋 З поверненням до Ambassador Shop!`, getProfileKeyboard(userId));
   } else {
-    return ctx.reply('У вас ще немає карти. Натисніть "💳 Створити карту клієнта", щоб зареєструватися!');
+    // Якщо карти немає, автоматично створюємо її одразу
+    db.lastCardNumber += 1;
+    const usernameFromTg = ctx.from.username ? '@' + ctx.from.username : (ctx.from.first_name || 'Клієнт');
+
+    db.users[userId] = {
+      cardNumber: db.lastCardNumber,
+      username: usernameFromTg,
+      coins: 0
+    };
+    saveDB();
+
+    return ctx.replyWithMarkdown(
+`🎉 *У вас ще не було карти, але ми щойно автоматично її створили!*
+
+🆔 *Ваш номер картки:* #${db.lastCardNumber}
+👤 *Ваш профіль:* ${usernameFromTg}
+🪙 *Баланс:* 0 Ambassador Coins`,
+      getProfileKeyboard(userId)
+    );
   }
 });
 
@@ -172,12 +205,26 @@ bot.action('profile_info', async (ctx) => {
 `📂 *Особистий кабінет Ambassador Shop*
 
 🆔 *Номер картки:* #${user.cardNumber}
-👤 *Ваш нікнейм:* ${user.username}
+👤 *Ваш профіль:* ${user.username}
 🪙 *Баланс:* ${user.coins} Ambassador Coins _(еквівалент ${user.coins * 5} грн)_`,
       getProfileKeyboard(userId)
     );
   } else {
-    return ctx.reply('У вас ще немає клієнтської картки! Натисніть "💳 Створити карту клієнта".');
+    // Автоматично створюємо, якщо чомусь не було в базі
+    db.lastCardNumber += 1;
+    const usernameFromTg = ctx.from.username ? '@' + ctx.from.username : (ctx.from.first_name || 'Клієнт');
+    db.users[userId] = { cardNumber: db.lastCardNumber, username: usernameFromTg, coins: 0 };
+    saveDB();
+
+    const user = db.users[userId];
+    return ctx.replyWithMarkdown(
+`📂 *Особистий кабінет Ambassador Shop* (картку створено автоматично)
+
+🆔 *Номер картки:* #${user.cardNumber}
+👤 *Ваш профіль:* ${user.username}
+🪙 *Баланс:* 0 Ambassador Coins`,
+      getProfileKeyboard(userId)
+    );
   }
 });
 
@@ -199,13 +246,12 @@ bot.action('admin_all_cards', async (ctx) => {
 
   for (const [tgId, data] of usersList) {
     message += `🆔 *Карта:* #${data.cardNumber}\n`;
-    message += `👤 *Нікнейм:* ${data.username}\n`;
+    message += `👤 *Профіль:* ${data.username}\n`;
     message += `🔗 *Telegram ID:* \`${tgId}\`\n`;
     message += `🪙 *Баланс:* ${data.coins} coins\n`;
     message += `-----------------------------------\n`;
   }
 
-  // Якщо текст занадто довгий, розбиваємо або відправляємо як є (Telegram дозволяє до 4096 символів)
   if (message.length > 4000) {
     message = message.substring(0, 3900) + '\n\n... (список занадто великий)';
   }
@@ -272,7 +318,10 @@ bot.action(/^buy_prod_(.+)$/, async (ctx) => {
   const userId = ctx.from.id;
 
   if (!db.users[userId]) {
-    return ctx.reply('Спочатку створіть карту клієнта!');
+    db.lastCardNumber += 1;
+    const usernameFromTg = ctx.from.username ? '@' + ctx.from.username : (ctx.from.first_name || 'Клієнт');
+    db.users[userId] = { cardNumber: db.lastCardNumber, username: usernameFromTg, coins: 0 };
+    saveDB();
   }
 
   const productId = ctx.match[1];
@@ -309,7 +358,7 @@ bot.action(/^buy_prod_(.+)$/, async (ctx) => {
   );
 
   const user = db.users[userId];
-  const clientUsername = ctx.from.username ? ctx.from.username : (user ? user.username : 'без_юзернейма');
+  const clientUsername = user ? user.username : 'без_ім\'я';
   const userCardNum = user ? user.cardNumber : 'Немає';
   const adminTags = ADMIN_USERNAMES.map(u => '@' + u).join(' ');
 
@@ -317,7 +366,7 @@ bot.action(/^buy_prod_(.+)$/, async (ctx) => {
 `🛍 *НОВА ЗАЯВКА НА КУПІВЛЮ ТОВАРУ!*
 
 🆔 *Номер замовлення:* \`#${shortId}\`
-👤 *Покупець:* @${clientUsername} (Карта #${userCardNum})
+👤 *Покупець:* ${clientUsername} (Карта #${userCardNum})
 🛍 *Товар:* ${product.title}
 💰 *Ціна товару:* ${originalPrice} грн
 
@@ -334,7 +383,10 @@ bot.action(/^use_coins_prod_(.+)$/, async (ctx) => {
   const userId = ctx.from.id;
 
   if (!db.users[userId]) {
-    return ctx.reply('Спочатку створіть карту клієнта!');
+    db.lastCardNumber += 1;
+    const usernameFromTg = ctx.from.username ? '@' + ctx.from.username : (ctx.from.first_name || 'Клієнт');
+    db.users[userId] = { cardNumber: db.lastCardNumber, username: usernameFromTg, coins: 0 };
+    saveDB();
   }
 
   const user = db.users[userId];
@@ -448,13 +500,13 @@ bot.action(/^cancel_purchase_(.+)$/, async (ctx) => {
     getProfileKeyboard(userId)
   );
 
-  const clientUsername = ctx.from.username ? ctx.from.username : (db.users[userId] ? db.users[userId].username : 'клієнт');
+  const clientUsername = db.users[userId] ? db.users[userId].username : 'клієнт';
   const prodTitle = purchase.productTitle ? purchase.productTitle : 'Товар';
 
   for (const adminId of ADMIN_IDS) {
     bot.telegram.sendMessage(
       adminId,
-      `⚠️ *КЛІЄНТ СКАСУВАВ ЗАМОВЛЕННЯ!*\n\n👤 Клієнт: @${clientUsername} (Карта #${userCardNum})\n🛍 Товар: ${prodTitle}\n🪙 Повернуто коїнів: ${purchase.coinsUsed} coins`,
+      `⚠️ *КЛІЄНТ СКАСУВАВ ЗАМОВЛЕННЯ!*\n\n👤 Клієнт: ${clientUsername} (Карта #${userCardNum})\n🛍 Товар: ${prodTitle}\n🪙 Повернуто коїнів: ${purchase.coinsUsed} coins`,
       { parse_mode: 'Markdown' }
     ).catch(() => {});
   }
@@ -515,14 +567,14 @@ bot.on('text', async (ctx, next) => {
       getProfileKeyboard(userId)
     );
 
-    const clientUsername = ctx.from.username ? ctx.from.username : db.users[userId].username;
+    const clientUsername = db.users[userId].username;
     const adminTags = ADMIN_USERNAMES.map(u => '@' + u).join(' ');
 
     const adminMessage = 
 `📥 *НОВЕ ЗАМОВЛЕННЯ ЗІ ЗНИЖКОЮ!*
 
 🆔 *Номер замовлення:* \`#${shortId}\`
-👤 *Клієнт:* @${clientUsername} (Картка #${db.users[userId].cardNumber})
+👤 *Клієнт:* ${clientUsername} (Картка #${db.users[userId].cardNumber})
 🛍 *Товар:* ${productTitle}
 💰 *Ціна товару:* ${originalPrice} грн
 🪙 *Списано коїнів:* ${coinsToUse} coins (-${discountUah} грн)
@@ -535,27 +587,6 @@ bot.on('text', async (ctx, next) => {
       bot.telegram.sendMessage(adminId, adminMessage, { parse_mode: 'Markdown' }).catch(() => {});
     }
     return;
-  }
-
-  if (userState[userId] === 'waiting_username') {
-    db.lastCardNumber += 1;
-    db.users[userId] = {
-      cardNumber: db.lastCardNumber,
-      username: messageText,
-      coins: 0
-    };
-    saveDB();
-
-    delete userState[userId];
-
-    return ctx.replyWithMarkdown(
-`🎉 *Вітаємо! Вашу карту Ambassador Shop успішно створено!*
-
-🆔 *Ваш номер картки:* #${db.lastCardNumber}
-👤 *Ваш нік:* ${messageText}
-🪙 *Баланс:* 0 Ambassador Coins`,
-      getProfileKeyboard(userId)
-    );
   }
 });
 
@@ -650,7 +681,7 @@ bot.command('remove', (ctx) => {
   const args = ctx.message.text.trim().split(/\s+/);
   if (args.length < 3) return ctx.reply('⚠️ Формат: `/remove [номер_карти] [коїни]`', { parse_mode: 'Markdown' });
 
-  const targetCardNum = String(args[1].replace('#', ''));
+  const targetCardNum = String(args[1]).replace('#', '');
   const coinsToRemove = parseInt(args[2], 10);
 
   let targetUserId = Object.keys(db.users).find(id => String(db.users[id].cardNumber) === targetCardNum);
